@@ -1,5 +1,7 @@
 # hasakiDR 文档
 
+中文简体|[ENGLISH](https://github.com/modemneko/hasakiDR/blob/main/README_EN.md)
+
 ## 目录
 
 1. [项目概述](#项目概述)
