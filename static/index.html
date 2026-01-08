@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>hasakiDR</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f52e.png">
+    <style>
+    ::-webkit-scrollbar { width: 8px; background: #f3f4f6; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    .markdown-body { font-size: 15px; line-height: 1.7; }
+    .modal-bg { background: rgba(0,0,0,0.3); }
+    .drawer {
+      position: fixed; top: 0; right: 0; height: 100vh; z-index: 50;
+      background: #fff; box-shadow: -2px 0 16px rgba(0,0,0,0.08);
+      width: 100%; max-width: 540px; min-width: 320px;
+      transform: translateX(100%); transition: transform 0.3s cubic-bezier(.4,0,.2,1);
+      display: flex; flex-direction: column;
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-header { padding: 1rem 1.5rem 0.5rem 1.5rem; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; }
+    .drawer-content { flex: 1; overflow-y: auto; padding: 1.5rem; }
+    .drawer-btn { background: #f3f4f6; border: none; border-radius: 4px; padding: 0.3rem 0.7rem; margin-left: 0.5rem; cursor: pointer; transition: background 0.2s; }
+    .drawer-btn:hover { background: #e0e7ef; }
+    .markdown-body a { color: #2563eb; text-decoration: underline; word-break: break-all; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+  <header class="bg-white shadow p-4 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f52e.png" class="w-8 h-8" alt="logo">
+      <span class="text-2xl font-bold text-gray-800">hasakiDR</span>
+    </div>
+    <a href="https://github.com/" target="_blank" class="text-blue-500 hover:underline">GitHub</a>
+  </header>
+  <main class="flex-1 flex flex-col md:flex-row max-w-6xl mx-auto w-full mt-4 gap-4">
+    <!-- 聊天区 -->
+    <section class="flex-1 bg-white rounded-lg shadow p-4 flex flex-col overflow-hidden">
+      <div id="chat-area" class="flex-1 overflow-y-auto pr-2" style="max-height:70vh;"></div>
+      <form id="research-form" class="mt-4 flex flex-col gap-2" autocomplete="off">
+        <div class="flex gap-2">
+          <input id="query-input" type="text" required placeholder="请输入研究主题..." class="flex-1 px-3 py-2 border rounded focus:outline-none focus:ring focus:border-blue-300" />
+          <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">开始研究</button>
+        </div>
+        <div class="flex gap-4 items-center text-sm">
+          <label class="flex items-center gap-1">
+            最大迭代次数：
+            <input type="number" id="max-iterations" min="1" max="10" value="3" class="w-16 px-1 py-0.5 border rounded" />
+          </label>
+        </div>
+      </form>
+    </section>
+    <!-- 右侧报告区 -->
+    <aside class="w-full md:w-96 bg-white rounded-lg shadow p-4 flex flex-col gap-4">
+      <div>
+        <h2 class="text-lg font-semibold mb-2">最终研究报告</h2>
+        <div id="final-report" class="bg-gray-50 rounded p-3 text-gray-700 text-sm max-h-64 overflow-y-auto whitespace-pre-line">（报告将在研究完成后显示）</div>
+        <button id="show-report-btn" class="hidden mt-2 bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition">点击查看报告</button>
+      </div>
+      <div>
+        <h2 class="text-lg font-semibold mb-2">研究进度</h2>
+        <div id="progress-info" class="text-xs text-gray-500">尚未开始</div>
+      </div>
+    </aside>
+    <!-- 报告抽屉（右侧滑出） -->
+    <div id="drawer-bg" class="fixed inset-0 z-40 hidden modal-bg"></div>
+    <div id="drawer" class="drawer">
+      <div class="drawer-header">
+        <span class="font-bold text-lg">研究报告</span>
+        <div>
+          <button id="copy-report" class="drawer-btn" title="复制报告">📋 复制</button>
+          <button id="close-drawer" class="drawer-btn" title="关闭">✕</button>
+        </div>
+      </div>
+      <div id="drawer-content" class="drawer-content markdown-body"></div>
+    </div>
+  </main>
+  <footer class="text-center text-gray-400 text-xs py-4">© 2024 hasakiDR | Powered by Tailwind CSS</footer>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    const chatArea = document.getElementById('chat-area');
+    const form = document.getElementById('research-form');
+    const queryInput = document.getElementById('query-input');
+    const maxIterations = document.getElementById('max-iterations');
+    const finalReport = document.getElementById('final-report');
+    const progressInfo = document.getElementById('progress-info');
+    const showReportBtn = document.getElementById('show-report-btn');
+    const drawer = document.getElementById('drawer');
+    const drawerBg = document.getElementById('drawer-bg');
+    const drawerContent = document.getElementById('drawer-content');
+    const closeDrawer = document.getElementById('close-drawer');
+    const copyReport = document.getElementById('copy-report');
+
+    let currentQuery = '';
+    let currentPlan = '';
+    let polling = false;
+    let lastLogIndex = 0;
+    let reportMarkdown = '';
+
+    function addChatBubble(content, fromAI = true, isMarkdown = false) {
+      const bubble = document.createElement('div');
+      bubble.className = `my-2 flex ${fromAI ? 'justify-start' : 'justify-end'}`;
+      bubble.innerHTML = `
+        <div class="max-w-[80%] px-4 py-2 rounded-lg shadow text-sm whitespace-pre-line ${fromAI ? 'bg-blue-50 text-gray-800' : 'bg-green-100 text-gray-700'}">
+          ${isMarkdown ? marked.parse(content) : content.replace(/\n/g, '<br>')}
+        </div>
+      `;
+      chatArea.appendChild(bubble);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function resetChat() {
+      chatArea.innerHTML = '';
+      lastLogIndex = 0;
+      currentPlan = '';
+      polling = false;
+      showReportBtn.classList.add('hidden');
+      finalReport.textContent = '（报告将在研究完成后显示）';
+      progressInfo.textContent = '尚未开始';
+    }
+
+    async function fetchPlan(query) {
+      progressInfo.textContent = 'AI 正在生成研究计划...';
+      const res = await fetch('/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query })
+      });
+      const data = await res.json();
+      return data.plan;
+    }
+
+    function showPlanConfirm(plan) {
+      addChatBubble('【AI 研究计划】\n' + plan, true, true);
+      // 添加“同意/修改”按钮
+      const btnRow = document.createElement('div');
+      btnRow.className = 'flex gap-2 my-2';
+      btnRow.innerHTML = `
+        <button id="agree-btn" class="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition">同意</button>
+        <button id="edit-btn" class="bg-gray-200 text-gray-700 px-3 py-1 rounded hover:bg-gray-300 transition">修改</button>
+      `;
+      chatArea.appendChild(btnRow);
+      chatArea.scrollTop = chatArea.scrollHeight;
+      document.getElementById('agree-btn').onclick = async () => {
+        addChatBubble('同意该研究计划', false);
+        btnRow.remove();
+        addChatBubble('AI：请稍等，正在研究...', true);
+        startResearch(currentQuery, plan);
+      };
+      document.getElementById('edit-btn').onclick = () => {
+        btnRow.remove();
+        // 允许用户编辑 plan
+        const editArea = document.createElement('textarea');
+        editArea.className = 'w-full border rounded p-2 my-2';
+        editArea.value = plan;
+        chatArea.appendChild(editArea);
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = '保存并开始研究';
+        saveBtn.className = 'bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition my-2';
+        chatArea.appendChild(saveBtn);
+        chatArea.scrollTop = chatArea.scrollHeight;
+        saveBtn.onclick = () => {
+          const newPlan = editArea.value.trim();
+          if (newPlan) {
+            addChatBubble('（用户修改了研究计划）', false);
+            addChatBubble('【AI 研究计划】\n' + newPlan, true, true);
+            editArea.remove();
+            saveBtn.remove();
+            addChatBubble('AI：请稍等，正在研究...', true);
+            startResearch(currentQuery, newPlan);
+          }
+        };
+      };
+    }
+
+    async function startResearch(query, plan) {
+      polling = true;
+      lastLogIndex = 0;
+      progressInfo.textContent = '研究已启动...';
+      const res = await fetch('/research', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, plan, max_iterations: Number(maxIterations.value) })
+      });
+      const data = await res.json();
+      if (data.report && data.report.startsWith('错误')) {
+        addChatBubble('【研究启动失败】' + data.report, true);
+        progressInfo.textContent = '研究启动失败';
+        polling = false;
+        return;
+      }
+      pollProgress(query);
+    }
+
+    async function pollProgress(query) {
+      polling = true;
+      let finished = false;
+      while (polling && !finished) {
+        try {
+          const res = await fetch(`/research_progress?query=${encodeURIComponent(query)}`);
+          const data = await res.json();
+          progressInfo.textContent = data.progress || '进行中...';
+          // 追加新日志为聊天气泡
+          if (Array.isArray(data.logs)) {
+            for (let i = lastLogIndex; i < data.logs.length; i++) {
+              const log = data.logs[i];
+              if (log.type === 'planner') {
+                addChatBubble('【AI 计划】\n' + log.content, true, true);
+              } else if (log.type === 'researcher') {
+                addChatBubble('【AI 检索与分析】\n' + log.content, true, true);
+              } else if (log.type === 'synthesizer') {
+                addChatBubble('【AI 总结】\n' + log.content, true, true);
+              } else if (log.type === 'final_report_generator') {
+                addChatBubble('【AI 报告生成】\n' + log.content, true, true);
+              } else {
+                addChatBubble('【AI】' + log.content, true, true);
+              }
+            }
+            lastLogIndex = data.logs.length;
+          }
+          // 研究完成，显示报告按钮
+          if (data.is_complete) {
+            finished = true;
+            polling = false;
+            if (data.final_report) {
+              finalReport.textContent = '报告已生成，点击下方按钮查看';
+              reportMarkdown = data.final_report;
+              showReportBtn.classList.remove('hidden');
+              addChatBubble('【研究已完成，报告已生成】', true);
+            } else if (data.error) {
+              finalReport.textContent = data.error;
+              addChatBubble('【研究失败】' + data.error, true);
+            }
+          }
+        } catch (e) {
+          progressInfo.textContent = '进度获取失败';
+          polling = false;
+        }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (polling) return;
+      const query = queryInput.value.trim();
+      if (!query) return;
+      resetChat();
+      addChatBubble('【研究主题】' + query, false);
+      progressInfo.textContent = 'AI 正在生成研究计划...';
+      currentQuery = query;
+      // 1. 请求 /plan
+      const plan = await fetchPlan(query);
+      currentPlan = plan;
+      showPlanConfirm(plan);
+    });
+
+    showReportBtn.onclick = () => {
+      if (!reportMarkdown) return;
+      drawerContent.innerHTML = marked.parse(reportMarkdown);
+      drawer.classList.add('open');
+      drawerBg.classList.remove('hidden');
+    };
+    closeDrawer.onclick = () => {
+      drawer.classList.remove('open');
+      drawerBg.classList.add('hidden');
+    };
+    drawerBg.onclick = (e) => {
+      if (e.target === drawerBg) {
+        drawer.classList.remove('open');
+        drawerBg.classList.add('hidden');
+      }
+    };
+    copyReport.onclick = () => {
+      if (!reportMarkdown) return;
+      navigator.clipboard.writeText(reportMarkdown).then(() => {
+        copyReport.textContent = '已复制!';
+        setTimeout(() => { copyReport.textContent = '📋 复制'; }, 1200);
+      });
+    };
+  </script>
+</body>
+</html>
